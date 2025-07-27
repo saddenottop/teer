@@ -1,10 +1,12 @@
--- FULL visual.lua for TridentLibrary: ESP, Object ESP, Chams, Bullet Trace, Hit Logs, FOV changer, World (clouds, ambient, always day, remove fog, remove leaves, skybox, etc)
--- Подключать так: local Visual = loadstring(game:HttpGet("https://yourdomain/visual.lua"))() Visual(VisualTab)
+-- visual.lua (полный рабочий для TridentLibrary, ESP Weapon через PlayerTable.equippedItem.type, "Hands" по дефолту)
+-- Подключать так:
+-- local Visual = loadstring(game:HttpGet("https://raw.githubusercontent.com/saddatopt/ts/main/visual.lua"))()
+-- Visual(VisualTab)
 
 return function(VisualTab)
     assert(VisualTab, "Передайте VisualTab при вызове visual.lua!")
 
-    -- === SETTINGS ===
+    -- === НАСТРОЙКИ ===
     local espSettings = {
         enabled = false,
         box = false,
@@ -41,16 +43,6 @@ return function(VisualTab)
         enabled = false,
         soundType = "Rust"
     }
-    local objectEspSettings = {
-        enabled = false,
-        atv = false,
-        atvColor = Color3.fromRGB(61,255,200),
-        corpse = false,
-        corpseColor = Color3.fromRGB(255,0,0),
-        dropped = false,
-        droppedColor = Color3.fromRGB(204,153,255),
-        maxDistance = 2000
-    }
     local worldVisuals = {
         noGrass = false,
         noLeaves = false,
@@ -60,8 +52,7 @@ return function(VisualTab)
         ambientEnabled = false,
         alwaysDay = false,
         removeFog = false,
-        skybox = "Default",
-        fov = 70
+        skybox = "Default"
     }
     local skyboxes = {
         ["Default"] = {
@@ -78,7 +69,6 @@ return function(VisualTab)
     local EspBox = VisualTab:AddLeftGroupbox("ESP", "box")
     local ChamsBox = VisualTab:AddRightGroupbox("Chams", "wand")
     local WorldBox = VisualTab:AddRightGroupbox("World", "globe")
-    local ObjectBox = VisualTab:AddLeftGroupbox("Object ESP", "cube")
 
     EspBox:AddToggle("espEnabled", {
         Text = "Enabled",
@@ -177,15 +167,161 @@ return function(VisualTab)
         Callback = function(val) chamsSettings.itemMat = val end
     })
 
+    WorldBox:AddLabel("Map Visuals")
+    local terrain, lighting = nil, game:GetService("Lighting")
+    local cloudsObject, oldCloudsProps, oldAmbient, oldBrightness, oldOutdoorAmbient, oldTime, oldFogProps = nil, {}, nil, nil, nil, nil, {}
+    local leavesRemoved = {}
+    local function ensureTerrain()
+        terrain = workspace:FindFirstChildOfClass("Terrain")
+        if not terrain then
+            repeat task.wait() until workspace:FindFirstChildOfClass("Terrain")
+            terrain = workspace:FindFirstChildOfClass("Terrain")
+        end
+    end
+    local function setGrassEnabled(enabled)
+        ensureTerrain()
+        if sethiddenproperty then
+            sethiddenproperty(terrain, "Decoration", enabled)
+        end
+    end
+    local function removeLeaves()
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj:IsA("BasePart") and obj.Name:match("Leaves$") then
+                obj:Destroy()
+            end
+        end
+    end
+    local function leavesWatcher()
+        if worldVisuals.noLeaves then
+            removeLeaves()
+            if not leavesRemoved.conn then
+                leavesRemoved.conn = workspace.DescendantAdded:Connect(function(obj)
+                    if worldVisuals.noLeaves and obj:IsA("BasePart") and obj.Name:match("Leaves$") then
+                        obj:Destroy()
+                    end
+                end)
+            end
+        else
+            if leavesRemoved.conn then
+                leavesRemoved.conn:Disconnect()
+                leavesRemoved.conn = nil
+            end
+        end
+    end
+    local function setClouds(enabled, color)
+        ensureTerrain()
+        if not cloudsObject then
+            cloudsObject = terrain:FindFirstChildOfClass("Clouds")
+        end
+        if enabled then
+            if not cloudsObject then
+                cloudsObject = Instance.new("Clouds")
+                cloudsObject.Parent = terrain
+            end
+            if not oldCloudsProps.color then
+                oldCloudsProps.color = cloudsObject.Color
+            end
+            cloudsObject.Enabled = true
+            cloudsObject.Color = color or worldVisuals.cloudsColor
+        else
+            if cloudsObject then
+                cloudsObject.Enabled = false
+            end
+        end
+    end
+    local ambientApplyConn = nil
+    local function setAmbient(enabled, color)
+        if enabled then
+            if not oldAmbient then oldAmbient = lighting.Ambient end
+            if not oldBrightness then oldBrightness = lighting.Brightness end
+            if not oldOutdoorAmbient then oldOutdoorAmbient = lighting.OutdoorAmbient end
+            lighting.Ambient = color or worldVisuals.ambient
+            lighting.Brightness = 3
+            lighting.OutdoorAmbient = color or worldVisuals.ambient
+            if ambientApplyConn then ambientApplyConn:Disconnect() end
+            ambientApplyConn = lighting.Changed:Connect(function(prop)
+                if worldVisuals.ambientEnabled and (prop == "Ambient" or prop == "Brightness" or prop == "OutdoorAmbient") then
+                    lighting.Ambient = worldVisuals.ambient
+                    lighting.Brightness = 3
+                    lighting.OutdoorAmbient = worldVisuals.ambient
+                end
+            end)
+        else
+            if ambientApplyConn then ambientApplyConn:Disconnect() end
+            ambientApplyConn = nil
+            if oldAmbient then lighting.Ambient = oldAmbient end
+            if oldBrightness then lighting.Brightness = oldBrightness end
+            if oldOutdoorAmbient then lighting.OutdoorAmbient = oldOutdoorAmbient end
+            oldAmbient, oldBrightness, oldOutdoorAmbient = nil, nil, nil
+        end
+    end
+    local alwaysDayConn = nil
+    local function setAlwaysDay(enabled)
+        if enabled then
+            if not oldTime then oldTime = lighting.ClockTime end
+            lighting.ClockTime = 6
+            if alwaysDayConn then alwaysDayConn:Disconnect() end
+            alwaysDayConn = lighting:GetPropertyChangedSignal("ClockTime"):Connect(function()
+                if worldVisuals.alwaysDay and lighting.ClockTime ~= 6 then
+                    lighting.ClockTime = 6
+                end
+            end)
+            setAmbient(worldVisuals.ambientEnabled, worldVisuals.ambient)
+        else
+            if alwaysDayConn then alwaysDayConn:Disconnect() end
+            alwaysDayConn = nil
+            if oldTime then lighting.ClockTime = oldTime end
+        end
+    end
+    local fogApplyConn = nil
+    local function setRemoveFog(enabled)
+        if enabled then
+            if not oldFogProps.start then
+                oldFogProps.start = lighting.FogStart
+                oldFogProps.endp = lighting.FogEnd
+                oldFogProps.color = lighting.FogColor
+            end
+            lighting.FogStart = 1000000
+            lighting.FogEnd = 1000000
+            lighting.FogColor = Color3.new(1,1,1)
+            if fogApplyConn then fogApplyConn:Disconnect() end
+            fogApplyConn = lighting.Changed:Connect(function(prop)
+                if worldVisuals.removeFog and (prop == "FogStart" or prop == "FogEnd" or prop == "FogColor") then
+                    lighting.FogStart = 1000000
+                    lighting.FogEnd = 1000000
+                    lighting.FogColor = Color3.new(1,1,1)
+                end
+            end)
+        else
+            if fogApplyConn then fogApplyConn:Disconnect() end
+            fogApplyConn = nil
+            if oldFogProps.start then lighting.FogStart = oldFogProps.start end
+            if oldFogProps.endp then lighting.FogEnd = oldFogProps.endp end
+            if oldFogProps.color then lighting.FogColor = oldFogProps.color end
+            oldFogProps = {}
+        end
+    end
+    local function setSkybox(name)
+        for _,v in pairs(lighting:GetChildren()) do
+            if v:IsA("Sky") then v:Destroy() end
+        end
+        local sb = skyboxes[name]
+        if sb then
+            local sky = Instance.new("Sky")
+            sky.Name = "WorldSkybox"
+            for k, v in pairs(sb) do
+                sky[k] = v
+            end
+            sky.Parent = lighting
+        end
+    end
+
     WorldBox:AddToggle("NoGrass", {
         Text = "No Grass",
         Default = false,
         Callback = function(val)
             worldVisuals.noGrass = val
-            local terrain = workspace:FindFirstChildOfClass("Terrain")
-            if sethiddenproperty and terrain then
-                sethiddenproperty(terrain, "Decoration", not val)
-            end
+            setGrassEnabled(not val)
         end
     })
     WorldBox:AddToggle("NoLeaves", {
@@ -193,6 +329,7 @@ return function(VisualTab)
         Default = false,
         Callback = function(val)
             worldVisuals.noLeaves = val
+            leavesWatcher()
         end
     })
     WorldBox:AddToggle("Clouds", {
@@ -200,12 +337,16 @@ return function(VisualTab)
         Default = true,
         Callback = function(val)
             worldVisuals.clouds = val
+            setClouds(val, worldVisuals.cloudsColor)
         end
     }):AddColorPicker("CloudsColor", {
         Default = worldVisuals.cloudsColor,
         Title = "Clouds Color",
         Callback = function(val)
             worldVisuals.cloudsColor = val
+            if worldVisuals.clouds then
+                setClouds(true, val)
+            end
         end
     })
     WorldBox:AddToggle("Ambient", {
@@ -213,12 +354,16 @@ return function(VisualTab)
         Default = false,
         Callback = function(val)
             worldVisuals.ambientEnabled = val
+            setAmbient(val, worldVisuals.ambient)
         end
     }):AddColorPicker("AmbientColor", {
         Default = worldVisuals.ambient,
         Title = "Ambient Color",
         Callback = function(val)
             worldVisuals.ambient = val
+            if worldVisuals.ambientEnabled then
+                setAmbient(true, val)
+            end
         end
     })
     WorldBox:AddToggle("AlwaysDay", {
@@ -226,6 +371,7 @@ return function(VisualTab)
         Default = false,
         Callback = function(val)
             worldVisuals.alwaysDay = val
+            setAlwaysDay(val)
         end
     })
     WorldBox:AddToggle("RemoveFog", {
@@ -233,6 +379,7 @@ return function(VisualTab)
         Default = false,
         Callback = function(val)
             worldVisuals.removeFog = val
+            setRemoveFog(val)
         end
     })
     WorldBox:AddDropdown("SkyboxSelect", {
@@ -241,21 +388,11 @@ return function(VisualTab)
         Default = "Default",
         Callback = function(val)
             worldVisuals.skybox = val
+            setSkybox(val)
         end
     })
-    WorldBox:AddSlider("worldFovSlider", {
-        Text = "FOV Changer",
-        Default = 70,
-        Min = 40,
-        Max = 120,
-        Rounding = 0,
-        Callback = function(val)
-            worldVisuals.fov = val
-            if workspace.CurrentCamera then
-                workspace.CurrentCamera.FieldOfView = val
-            end
-        end
-    })
+
+    WorldBox:AddLabel("Other Visuals")
     WorldBox:AddToggle("BulletTrace", {
         Text = "Bullet Trace",
         Default = false,
@@ -302,196 +439,7 @@ return function(VisualTab)
         end
     })
 
-    ObjectBox:AddToggle("objectEspEnabled", {
-        Text = "Enabled",
-        Default = false,
-        Callback = function(val) objectEspSettings.enabled = val end
-    })
-    ObjectBox:AddToggle("objectEspAtv", {
-        Text = "ATV",
-        Default = false,
-        Callback = function(val) objectEspSettings.atv = val end
-    }):AddColorPicker("objectEspAtvColor", {
-        Default = objectEspSettings.atvColor,
-        Title = "ATV Color",
-        Callback = function(val) objectEspSettings.atvColor = val end
-    })
-    ObjectBox:AddToggle("objectEspCorpse", {
-        Text = "Corpse",
-        Default = false,
-        Callback = function(val) objectEspSettings.corpse = val end
-    }):AddColorPicker("objectEspCorpseColor", {
-        Default = objectEspSettings.corpseColor,
-        Title = "Corpse Color",
-        Callback = function(val) objectEspSettings.corpseColor = val end
-    })
-    ObjectBox:AddToggle("objectEspDropped", {
-        Text = "Dropped Item",
-        Default = false,
-        Callback = function(val) objectEspSettings.dropped = val end
-    }):AddColorPicker("objectEspDroppedColor", {
-        Default = objectEspSettings.droppedColor,
-        Title = "Dropped Item Color",
-        Callback = function(val) objectEspSettings.droppedColor = val end
-    })
-    ObjectBox:AddSlider("objectEspMaxDistance", {
-        Text = "Max Distance",
-        Default = 2000,
-        Min = 200,
-        Max = 5000,
-        Rounding = 0,
-        Callback = function(val) objectEspSettings.maxDistance = val end
-    })
-
-    -- === WORLD VISUALS RUNTIME ===
-    local camera = workspace.CurrentCamera
-    local runservice = game:GetService("RunService")
-    local coregui = game:GetService("CoreGui")
-    local players = game:GetService("Players")
-    local localplayer = players.LocalPlayer
-    local lighting = game:GetService("Lighting")
-    local ESPHolder = coregui:FindFirstChild("ESP_UI_FIX") or Instance.new("ScreenGui")
-    ESPHolder.Name = "ESP_UI_FIX"
-    ESPHolder.ResetOnSpawn = false
-    ESPHolder.Parent = coregui
-
-    -- SKYBOX LOGIC
-    local function setSkybox(name)
-        for _,v in pairs(lighting:GetChildren()) do
-            if v:IsA("Sky") then v:Destroy() end
-        end
-        local sb = skyboxes[name]
-        if sb then
-            local sky = Instance.new("Sky")
-            sky.Name = "WorldSkybox"
-            for k, v in pairs(sb) do
-                sky[k] = v
-            end
-            sky.Parent = lighting
-        end
-    end
-
-    -- CLOUDS LOGIC
-    local function setClouds(enabled, color)
-        local terrain = workspace:FindFirstChildOfClass("Terrain")
-        if not terrain then return end
-        local clouds = terrain:FindFirstChildOfClass("Clouds")
-        if enabled then
-            if not clouds then
-                clouds = Instance.new("Clouds")
-                clouds.Parent = terrain
-            end
-            clouds.Enabled = true
-            clouds.Color = color or worldVisuals.cloudsColor
-        else
-            if clouds then clouds.Enabled = false end
-        end
-    end
-
-    -- AMBIENT LOGIC
-    local oldAmbient, oldBrightness, oldOutdoorAmbient = nil, nil, nil
-    local function setAmbient(enabled, color)
-        if enabled then
-            if not oldAmbient then oldAmbient = lighting.Ambient end
-            if not oldBrightness then oldBrightness = lighting.Brightness end
-            if not oldOutdoorAmbient then oldOutdoorAmbient = lighting.OutdoorAmbient end
-            lighting.Ambient = color or worldVisuals.ambient
-            lighting.Brightness = 3
-            lighting.OutdoorAmbient = color or worldVisuals.ambient
-        else
-            if oldAmbient then lighting.Ambient = oldAmbient end
-            if oldBrightness then lighting.Brightness = oldBrightness end
-            if oldOutdoorAmbient then lighting.OutdoorAmbient = oldOutdoorAmbient end
-            oldAmbient, oldBrightness, oldOutdoorAmbient = nil, nil, nil
-        end
-    end
-
-    -- LEAVES LOGIC
-    local leavesRemoved = {}
-    local function removeLeaves()
-        for _, obj in ipairs(workspace:GetDescendants()) do
-            if obj:IsA("BasePart") and obj.Name:match("Leaves$") then
-                obj:Destroy()
-            end
-        end
-    end
-    local function leavesWatcher()
-        if worldVisuals.noLeaves then
-            removeLeaves()
-            if not leavesRemoved.conn then
-                leavesRemoved.conn = workspace.DescendantAdded:Connect(function(obj)
-                    if worldVisuals.noLeaves and obj:IsA("BasePart") and obj.Name:match("Leaves$") then
-                        obj:Destroy()
-                    end
-                end)
-            end
-        else
-            if leavesRemoved.conn then
-                leavesRemoved.conn:Disconnect()
-                leavesRemoved.conn = nil
-            end
-        end
-    end
-
-    -- ALWAYS DAY LOGIC
-    local oldTime, alwaysDayConn = nil, nil
-    local function setAlwaysDay(enabled)
-        if enabled then
-            if not oldTime then oldTime = lighting.ClockTime end
-            lighting.ClockTime = 6
-            if alwaysDayConn then alwaysDayConn:Disconnect() end
-            alwaysDayConn = lighting:GetPropertyChangedSignal("ClockTime"):Connect(function()
-                if worldVisuals.alwaysDay and lighting.ClockTime ~= 6 then
-                    lighting.ClockTime = 6
-                end
-            end)
-            setAmbient(worldVisuals.ambientEnabled, worldVisuals.ambient)
-        else
-            if alwaysDayConn then alwaysDayConn:Disconnect() end
-            alwaysDayConn = nil
-            if oldTime then lighting.ClockTime = oldTime end
-        end
-    end
-
-    -- FOG LOGIC
-    local oldFogProps, fogApplyConn = {}, nil
-    local function setRemoveFog(enabled)
-        if enabled then
-            if not oldFogProps.start then
-                oldFogProps.start = lighting.FogStart
-                oldFogProps.endp = lighting.FogEnd
-                oldFogProps.color = lighting.FogColor
-            end
-            lighting.FogStart = 1000000
-            lighting.FogEnd = 1000000
-            lighting.FogColor = Color3.new(1,1,1)
-        else
-            if fogApplyConn then fogApplyConn:Disconnect() end
-            fogApplyConn = nil
-            if oldFogProps.start then lighting.FogStart = oldFogProps.start end
-            if oldFogProps.endp then lighting.FogEnd = oldFogProps.endp end
-            if oldFogProps.color then lighting.FogColor = oldFogProps.color end
-            oldFogProps = {}
-        end
-    end
-
-    -- === WORLD RUNTIME LOOP ===
-    runservice.RenderStepped:Connect(function()
-        setClouds(worldVisuals.clouds, worldVisuals.cloudsColor)
-        setAmbient(worldVisuals.ambientEnabled, worldVisuals.ambient)
-        setAlwaysDay(worldVisuals.alwaysDay)
-        leavesWatcher()
-        setRemoveFog(worldVisuals.removeFog)
-        setSkybox(worldVisuals.skybox)
-        if camera.FieldOfView ~= worldVisuals.fov then
-            camera.FieldOfView = worldVisuals.fov
-        end
-    end)
-
-    -- === ДАЛЕЕ ВСТАВЬ ВЕСЬ КОД ESP/CHAMS/ObjectESP/Trace/Log/HitSound/Unload ===
-    -- [Весь код из твоего полного visual.lua, который был приведён выше, начинается с поиска PlayerTable, createEsp, UpdateAllEsps, Object ESP, Chams, Bullet Trace, Hit Logs, Hit Sound, Unload ...]
-
-    ----=== PlayerTable detection ===-----
+    -- === ESP WEAPON (PlayerTable detect, как в visual_esp.lua) ===
     local PlayerTable
     do
         for _, v in pairs(getgc(true)) do
@@ -507,7 +455,6 @@ return function(VisualTab)
             end
         end
     end
-
     local function GetPlayerWeaponType(char)
         if not PlayerTable then return "Hands" end
         for _, entry in pairs(PlayerTable) do
@@ -522,7 +469,179 @@ return function(VisualTab)
         return "Hands"
     end
 
+    -- === ВСЯ ЛОГИКА ESP/CHAMS/TRACE/LOG/HITSOUND ===
+
+    local camera = workspace.CurrentCamera
+    local runservice = game:GetService("RunService")
+    local coregui = game:GetService("CoreGui")
+    local players = game:GetService("Players")
+    local localplayer = players.LocalPlayer
+
+    local ESPHolder = coregui:FindFirstChild("ESP_UI_FIX") or Instance.new("ScreenGui")
+    ESPHolder.Name = "ESP_UI_FIX"
+    ESPHolder.ResetOnSpawn = false
+    ESPHolder.Parent = coregui
+
     local activeEsp = {}
+    local originalHandProps = {}
+    local originalItemProps = {}
+
+    local function applyItemChams(obj)
+        local id = obj:GetDebugId()
+        if obj.Name == "Arrow" or obj.Name == "Bullet" then return end
+        if chamsSettings.item then
+            if not originalItemProps[id] then
+                originalItemProps[id] = {Material=obj.Material, Color=obj.Color}
+            end
+            obj.Material = Enum.Material[chamsSettings.itemMat]
+            obj.Color = chamsSettings.itemColor
+        else
+            local old = originalItemProps[id]
+            if old then
+                obj.Material = old.Material
+                obj.Color = old.Color
+                originalItemProps[id] = nil
+            end
+        end
+    end
+    local function recurseItemChams(obj)
+        if obj:IsA("BasePart") or obj:IsA("MeshPart") then
+            applyItemChams(obj)
+        end
+        for _, child in ipairs(obj:GetChildren()) do
+            recurseItemChams(child)
+        end
+    end
+    local function updateIgnoreChams()
+        local ignore = workspace:FindFirstChild("Const") and workspace.Const:FindFirstChild("Ignore")
+        if not ignore then return end
+        for _, obj in ipairs(ignore:GetChildren()) do
+            if obj.Name ~= "FPSArms" and obj.Name ~= "LocalCharacter" and obj.Name ~= "Arrow" and obj.Name ~= "Bullet" then
+                recurseItemChams(obj)
+            end
+        end
+    end
+    local function updateFPSArmsHandModelChams()
+        local ignore = workspace:FindFirstChild("Const") and workspace.Const:FindFirstChild("Ignore")
+        local fpsarms = ignore and ignore:FindFirstChild("FPSArms")
+        if not fpsarms then return end
+        local handModel = fpsarms:FindFirstChild("HandModel")
+        if handModel then
+            recurseItemChams(handModel)
+        end
+        fpsarms.ChildAdded:Connect(function(child)
+            if child.Name == "HandModel" then
+                recurseItemChams(child)
+            end
+        end)
+    end
+    local function updateItemChams()
+        updateIgnoreChams()
+        updateFPSArmsHandModelChams()
+    end
+
+    runservice.RenderStepped:Connect(function()
+        updateItemChams()
+    end)
+    workspace.ChildAdded:Connect(function(child)
+        if child.Name == "Const" then
+            local ignore = child:WaitForChild("Ignore", 5)
+            if ignore then
+                ignore.ChildAdded:Connect(function(obj)
+                    updateItemChams()
+                end)
+            end
+        end
+    end)
+    workspace.DescendantAdded:Connect(function(child)
+        if child and child.Parent and child.Parent.Name == "FPSArms" and child.Name == "HandModel" then
+            updateItemChams()
+        end
+    end)
+
+    local function updateHandChams()
+        local arms = workspace:FindFirstChild("Const")
+        arms = arms and arms:FindFirstChild("Ignore")
+        arms = arms and arms:FindFirstChild("FPSArms")
+        if not arms then return end
+
+        local handNames = {"LeftHand", "RightHand"}
+        for _, name in ipairs(handNames) do
+            local hand = arms:FindFirstChild(name)
+            if hand and hand:IsA("MeshPart") then
+                local id = hand:GetDebugId()
+                if chamsSettings.hand then
+                    if not originalHandProps[id] then
+                        originalHandProps[id] = {Material=hand.Material, Color=hand.Color}
+                    end
+                    hand.Material = Enum.Material[chamsSettings.handMat]
+                    hand.Color = chamsSettings.handColor
+                else
+                    local old = originalHandProps[id]
+                    if old then
+                        hand.Material = old.Material
+                        hand.Color = old.Color
+                        originalHandProps[id] = nil
+                    end
+                end
+            end
+        end
+
+        local fake = arms:FindFirstChild("Fake")
+        if fake then
+            local fakeNames = {"c_LeftLowerArm", "c_RightLowerArm"}
+            for _, name in ipairs(fakeNames) do
+                local limb = fake:FindFirstChild(name)
+                if limb and limb:IsA("MeshPart") then
+                    local id = limb:GetDebugId()
+                    if chamsSettings.hand then
+                        if not originalHandProps[id] then
+                            originalHandProps[id] = {Material=limb.Material, Color=limb.Color}
+                        end
+                        limb.Material = Enum.Material[chamsSettings.handMat]
+                        limb.Color = chamsSettings.handColor
+                    else
+                        local old = originalHandProps[id]
+                        if old then
+                            limb.Material = old.Material
+                            limb.Color = old.Color
+                            originalHandProps[id] = nil
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    local hitSoundList = {
+        "PlayerHit",
+        "PlayerHit2",
+        "PlayerHit2_Muffled",
+        "PlayerHitHeadshot",
+        "PlayerHitHeadshot_Muffled",
+        "PlayerHit_Muffled"
+    }
+    local rustSoundId = "rbxassetid://18805676593"
+    local originalHitSoundIds = {}
+    local function updateHitSounds()
+        local soundService = game:GetService("SoundService")
+        for _, name in ipairs(hitSoundList) do
+            local sound = soundService:FindFirstChild(name)
+            if sound and sound:IsA("Sound") then
+                if hitSoundSettings.enabled and hitSoundSettings.soundType == "Rust" then
+                    if not originalHitSoundIds[name] then
+                        originalHitSoundIds[name] = sound.SoundId
+                    end
+                    sound.SoundId = rustSoundId
+                else
+                    if originalHitSoundIds[name] then
+                        sound.SoundId = originalHitSoundIds[name]
+                        originalHitSoundIds[name] = nil
+                    end
+                end
+            end
+        end
+    end
 
     local function removeEspFor(char, esp)
         if esp then
@@ -582,7 +701,8 @@ return function(VisualTab)
         return left, top, right, bottom, boxW, boxH, isSleeping
     end
 
-    local function createEsp(char)
+    local veryFarUpdateDelay = 0.25
+    local function CreateEsp(char)
         if activeEsp[char] then return end
         local esp = {}
         esp.Box = Drawing.new("Square")
@@ -615,6 +735,8 @@ return function(VisualTab)
         esp.Distance.Visible = false
         activeEsp[char] = esp
 
+        local lastUpdate = 0
+
         esp._conn = runservice.RenderStepped:Connect(function()
             if not char or not char.Parent or not char:FindFirstChild("HumanoidRootPart") then
                 esp._conn:Disconnect()
@@ -633,6 +755,10 @@ return function(VisualTab)
                 esp.Weapon.Visible = false
                 esp.Distance.Visible = false
                 return
+            end
+            if dist > 3000 then
+                if tick() - lastUpdate < veryFarUpdateDelay then return end
+                lastUpdate = tick()
             end
             local left, top, right, bottom, boxW, boxH = WorldToBox(char)
             if not left then return end
@@ -689,8 +815,7 @@ return function(VisualTab)
             end
             if espSettings.weapon then
                 esp.Weapon.Visible = true
-                local weap = GetPlayerWeaponType(char)
-                esp.Weapon.Text = weap or "Hands"
+                esp.Weapon.Text = GetPlayerWeaponType(char)
                 esp.Weapon.Position = Vector2.new(centerX, weapY)
                 esp.Weapon.Color = espSettings.weaponColor
             else
@@ -717,229 +842,14 @@ return function(VisualTab)
         for _, v in pairs(workspace:GetChildren()) do
             if v:FindFirstChild("HumanoidRootPart") and v ~= localplayer.Character then
                 if not activeEsp[v] then
-                    createEsp(v)
+                    CreateEsp(v)
                 end
             end
         end
     end
 
-    ---- Object ESP ----
-    local objectEspDrawings = { atv = {}, corpse = {}, dropped = {} }
-    local function clearObjectEsp(tbl)
-        for _, d in pairs(tbl) do
-            if d and typeof(d) == "table" then
-                for _, v in pairs(d) do
-                    if typeof(v) == "Instance" and v.Remove then
-                        pcall(function() v:Remove() end)
-                    end
-                end
-            else
-                if d and d.Remove then pcall(function() d:Remove() end) end
-            end
-        end
-        for k in pairs(tbl) do tbl[k] = nil end
-    end
-    local function updateAtvEsp()
-        clearObjectEsp(objectEspDrawings.atv)
-        if not (objectEspSettings.enabled and objectEspSettings.atv) then return end
-        for _, obj in ipairs(workspace:GetChildren()) do
-            if obj:FindFirstChild("Seat") and obj:FindFirstChild("Plastics") then
-                local primary = obj.PrimaryPart or obj:FindFirstChild("Plastics") or obj:FindFirstChildWhichIsA("BasePart")
-                if primary then
-                    local dist = (camera.CFrame.Position - primary.Position).Magnitude
-                    if dist <= objectEspSettings.maxDistance then
-                        local text = Drawing.new("Text")
-                        local screen, onScreen = camera:WorldToViewportPoint(primary.Position)
-                        text.Visible = onScreen
-                        text.Position = Vector2.new(screen.X, screen.Y)
-                        text.Text = string.format("ATV [%dm]", math.floor(dist))
-                        text.Size = 14
-                        text.Color = objectEspSettings.atvColor
-                        text.Outline = true
-                        text.OutlineColor = Color3.new(0,0,0)
-                        objectEspDrawings.atv[obj] = text
-                    end
-                end
-            end
-        end
-    end
-    local function updateCorpseEsp()
-        clearObjectEsp(objectEspDrawings.corpse)
-        if not (objectEspSettings.enabled and objectEspSettings.corpse) then return end
-        for _, obj in ipairs(workspace:GetChildren()) do
-            if obj.Name:lower():find("corpse") or (obj:IsA("Model") and (obj.PrimaryPart and obj.PrimaryPart.Name:lower():find("corpse"))) then
-                local primary = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
-                if primary then
-                    local dist = (camera.CFrame.Position - primary.Position).Magnitude
-                    if dist <= objectEspSettings.maxDistance then
-                        local text = Drawing.new("Text")
-                        local screen, onScreen = camera:WorldToViewportPoint(primary.Position)
-                        text.Visible = onScreen
-                        text.Position = Vector2.new(screen.X, screen.Y)
-                        text.Text = string.format("Corpse [%dm]", math.floor(dist))
-                        text.Size = 14
-                        text.Color = objectEspSettings.corpseColor
-                        text.Outline = true
-                        text.OutlineColor = Color3.new(0,0,0)
-                        objectEspDrawings.corpse[obj] = text
-                    end
-                end
-            end
-        end
-    end
-    local function updateDroppedItemEsp()
-        clearObjectEsp(objectEspDrawings.dropped)
-        if not (objectEspSettings.enabled and objectEspSettings.dropped) then return end
-        for _, obj in ipairs(workspace:GetChildren()) do
-            if obj.Name == "DroppedItem" or (obj:IsA("Model") and obj:FindFirstChild("DroppedItem")) then
-                local pos = obj.Position or (obj.PrimaryPart and obj.PrimaryPart.Position) or (obj:FindFirstChild("DroppedItem") and obj.DroppedItem.Position)
-                if pos then
-                    local dist = (camera.CFrame.Position - pos).Magnitude
-                    if dist <= objectEspSettings.maxDistance then
-                        local text = Drawing.new("Text")
-                        local screen, onScreen = camera:WorldToViewportPoint(pos)
-                        text.Visible = onScreen
-                        text.Position = Vector2.new(screen.X, screen.Y)
-                        text.Text = "Dropped"
-                        text.Size = 14
-                        text.Color = objectEspSettings.droppedColor
-                        text.Outline = true
-                        text.OutlineColor = Color3.new(0,0,0)
-                        objectEspDrawings.dropped[obj] = text
-                    end
-                end
-            end
-        end
-    end
-
-    ---- CHAMS ----
-    local originalHandProps = {}
-    local originalItemProps = {}
-    local function applyItemChams(obj)
-        local id = obj:GetDebugId()
-        if obj.Name == "Arrow" or obj.Name == "Bullet" then return end
-        if chamsSettings.item then
-            if not originalItemProps[id] then
-                originalItemProps[id] = {Material=obj.Material, Color=obj.Color}
-            end
-            obj.Material = Enum.Material[chamsSettings.itemMat]
-            obj.Color = chamsSettings.itemColor
-        else
-            local old = originalItemProps[id]
-            if old then
-                obj.Material = old.Material
-                obj.Color = old.Color
-                originalItemProps[id] = nil
-            end
-        end
-    end
-    local function recurseItemChams(obj)
-        if obj:IsA("BasePart") or obj:IsA("MeshPart") then
-            applyItemChams(obj)
-        end
-        for _, child in ipairs(obj:GetChildren()) do
-            recurseItemChams(child)
-        end
-    end
-    local function updateIgnoreChams()
-        local ignore = workspace:FindFirstChild("Const") and workspace.Const:FindFirstChild("Ignore")
-        if not ignore then return end
-        for _, obj in ipairs(ignore:GetChildren()) do
-            if obj.Name ~= "FPSArms" and obj.Name ~= "LocalCharacter" and obj.Name ~= "Arrow" and obj.Name ~= "Bullet" then
-                recurseItemChams(obj)
-            end
-        end
-    end
-    local function updateFPSArmsHandModelChams()
-        local ignore = workspace:FindFirstChild("Const") and workspace.Const:FindFirstChild("Ignore")
-        local fpsarms = ignore and ignore:FindFirstChild("FPSArms")
-        if not fpsarms then return end
-        local handModel = fpsarms:FindFirstChild("HandModel")
-        if handModel then
-            recurseItemChams(handModel)
-        end
-        fpsarms.ChildAdded:Connect(function(child)
-            if child.Name == "HandModel" then
-                recurseItemChams(child)
-            end
-        end)
-    end
-    local function updateItemChams()
-        updateIgnoreChams()
-        updateFPSArmsHandModelChams()
-    end
-    runservice.RenderStepped:Connect(function()
-        updateItemChams()
-    end)
-    workspace.ChildAdded:Connect(function(child)
-        if child.Name == "Const" then
-            local ignore = child:WaitForChild("Ignore", 5)
-            if ignore then
-                ignore.ChildAdded:Connect(function(obj)
-                    updateItemChams()
-                end)
-            end
-        end
-    end)
-    workspace.DescendantAdded:Connect(function(child)
-        if child and child.Parent and child.Parent.Name == "FPSArms" and child.Name == "HandModel" then
-            updateItemChams()
-        end
-    end)
-    local function updateHandChams()
-        local arms = workspace:FindFirstChild("Const")
-        arms = arms and arms:FindFirstChild("Ignore")
-        arms = arms and arms:FindFirstChild("FPSArms")
-        if not arms then return end
-        local handNames = {"LeftHand", "RightHand"}
-        for _, name in ipairs(handNames) do
-            local hand = arms:FindFirstChild(name)
-            if hand and hand:IsA("MeshPart") then
-                local id = hand:GetDebugId()
-                if chamsSettings.hand then
-                    if not originalHandProps[id] then
-                        originalHandProps[id] = {Material=hand.Material, Color=hand.Color}
-                    end
-                    hand.Material = Enum.Material[chamsSettings.handMat]
-                    hand.Color = chamsSettings.handColor
-                else
-                    local old = originalHandProps[id]
-                    if old then
-                        hand.Material = old.Material
-                        hand.Color = old.Color
-                        originalHandProps[id] = nil
-                    end
-                end
-            end
-        end
-        local fake = arms:FindFirstChild("Fake")
-        if fake then
-            local fakeNames = {"c_LeftLowerArm", "c_RightLowerArm"}
-            for _, name in ipairs(fakeNames) do
-                local limb = fake:FindFirstChild(name)
-                if limb and limb:IsA("MeshPart") then
-                    local id = limb:GetDebugId()
-                    if chamsSettings.hand then
-                        if not originalHandProps[id] then
-                            originalHandProps[id] = {Material=limb.Material, Color=limb.Color}
-                        end
-                        limb.Material = Enum.Material[chamsSettings.handMat]
-                        limb.Color = chamsSettings.handColor
-                    else
-                        local old = originalHandProps[id]
-                        if old then
-                            limb.Material = old.Material
-                            limb.Color = old.Color
-                            originalHandProps[id] = nil
-                        end
-                    end
-                end
-            end
-        end
-    end
-
-    ---- Bullet Trace ----
     local bulletTraces = {}
+
     local function createBulletTrailDynamic(part)
         local trailPoints = {}
         local trailLines = {}
@@ -994,6 +904,7 @@ return function(VisualTab)
             if conn then conn:Disconnect() end
         end)
     end
+
     local function updateBulletTraces()
         local ignore = workspace:FindFirstChild("Const") and workspace.Const:FindFirstChild("Ignore")
         if not ignore then return end
@@ -1017,6 +928,7 @@ return function(VisualTab)
             end
         end
     end
+
     workspace.DescendantAdded:Connect(function(child)
         if child.Name == "Arrow" or child.Name == "Bullet" then
             task.wait(0.03)
@@ -1024,32 +936,21 @@ return function(VisualTab)
         end
     end)
 
-    ---- Hit Logs / Hit Sound ----
-    local hitSoundList = {
-        "PlayerHit", "PlayerHit2", "PlayerHit2_Muffled",
-        "PlayerHitHeadshot", "PlayerHitHeadshot_Muffled", "PlayerHit_Muffled"
-    }
-    local rustSoundId = "rbxassetid://18805676593"
-    local originalHitSoundIds = {}
-    local function updateHitSounds()
-        local soundService = game:GetService("SoundService")
-        for _, name in ipairs(hitSoundList) do
-            local sound = soundService:FindFirstChild(name)
-            if sound and sound:IsA("Sound") then
-                if hitSoundSettings.enabled and hitSoundSettings.soundType == "Rust" then
-                    if not originalHitSoundIds[name] then
-                        originalHitSoundIds[name] = sound.SoundId
-                    end
-                    sound.SoundId = rustSoundId
-                else
-                    if originalHitSoundIds[name] then
-                        sound.SoundId = originalHitSoundIds[name]
-                        originalHitSoundIds[name] = nil
-                    end
-                end
+    runservice.RenderStepped:Connect(function()
+        UpdateAllEsps()
+        updateHandChams()
+        updateItemChams()
+        updateBulletTraces()
+        updateHitSounds()
+    end)
+
+    workspace.ChildAdded:Connect(function(v)
+        task.delay(1.5, function()
+            if v:FindFirstChild("HumanoidRootPart") and v ~= localplayer.Character then
+                CreateEsp(v)
             end
-        end
-    end
+        end)
+    end)
 
     local function parseLogLine(msg)
         local attacker, victim, time, weapon, hp_from, hp_to = msg:match("([%w~_]+)%s*%-%>([%w~_]+)%s+(%d+)s%s*([%w%s_%-]+)%s*([%d%.]+)%s*%-%>([%d%.]+)hp")
@@ -1061,10 +962,13 @@ return function(VisualTab)
         end
         return attacker, victim, time, weapon, hp_from, hp_to
     end
+
     local LogService = game:GetService("LogService")
     local logConn = nil
-    getgenv().TridentLibrary = getgenv().TridentLibrary or {}
+
     local Library = getgenv().TridentLibrary
+    assert(Library, "Library не был найден! Запустите main.lua сначала.")
+
     local function notifyLog(msg)
         local attacker, victim, time, weapon, hp_from, hp_to = parseLogLine(msg)
         if attacker and victim and hp_from and hp_to then
@@ -1088,6 +992,7 @@ return function(VisualTab)
             })
         end
     end
+
     function setupLogHooks()
         if logConn then pcall(function() logConn:Disconnect() end) end
         if logSettings.enabled then
@@ -1097,39 +1002,11 @@ return function(VisualTab)
         end
     end
 
-    ---- MAIN RENDER LOOP ----
-    runservice.RenderStepped:Connect(function()
-        -- ESP
-        UpdateAllEsps()
-        -- CHAMS
-        updateHandChams()
-        updateItemChams()
-        -- Object ESP
-        updateAtvEsp()
-        updateCorpseEsp()
-        updateDroppedItemEsp()
-        -- Bullet Trace
-        updateBulletTraces()
-        -- Hit Sounds
-        updateHitSounds()
-    end)
-    -- ESP on spawn
-    workspace.ChildAdded:Connect(function(v)
-        task.delay(1.5, function()
-            if v:FindFirstChild("HumanoidRootPart") and v ~= localplayer.Character then
-                createEsp(v)
-            end
-        end)
-    end)
-
----- UNLOAD ----
-if Library.OnUnload then
     Library:OnUnload(function()
         ESPHolder:Destroy()
         for char, esp in pairs(activeEsp) do
             removeEspFor(char, esp)
         end
-        clearObjectEsp(objectEspDrawings)
         if logConn then pcall(function() logConn:Disconnect() end) end
         local soundService = game:GetService("SoundService")
         for name, oldId in pairs(originalHitSoundIds) do
@@ -1141,5 +1018,3 @@ if Library.OnUnload then
         end
     end)
 end
-
-end -- <--- это закрывающий end для всей return function(VisualTab)
