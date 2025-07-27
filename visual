@@ -1,4 +1,3 @@
--- visual.lua PART 1 (начало, все настройки, UI, WorldBox, Hand/Item Chams, Weapon ESP PlayerTable, все функции и переменные до условного лимита символов)
 return function(VisualTab)
     assert(VisualTab, "Передайте VisualTab при вызове visual.lua!")
 
@@ -118,8 +117,6 @@ return function(VisualTab)
     ObjectBox:AddToggle("objectEspCorpse",{Text="Corpse",Default=false,Callback=function(val) objectEspSettings.corpse=val end}):AddColorPicker("objectEspCorpseColor",{Default=objectEspSettings.corpseColor,Title="Corpse Color",Callback=function(val) objectEspSettings.corpseColor=val end})
     ObjectBox:AddToggle("objectEspAtv",{Text="ATV",Default=false,Callback=function(val) objectEspSettings.atv=val end}):AddColorPicker("objectEspAtvColor",{Default=objectEspSettings.atvColor,Title="ATV Color",Callback=function(val) objectEspSettings.atvColor=val end})
 
-    -- Далее идут все функции, переменные и логика (ESP, Chams, Hitlog, Hitsound, BulletTrace, World, Weapon ESP через PlayerTable), до первого лимита длины ответа...
-
     local camera = workspace.CurrentCamera
     local runservice = game:GetService("RunService")
     local coregui = game:GetService("CoreGui")
@@ -134,7 +131,6 @@ return function(VisualTab)
     local originalHandProps = {}
     local originalItemProps = {}
 
-    -- === Weapon ESP через PlayerTable ===
     local PlayerTable
     do
         for _, v in pairs(getgc(true)) do
@@ -165,11 +161,9 @@ return function(VisualTab)
         return "hands"
     end
 
-    -- ... (Продолжение кода — смотри следующую часть)
-    -- === OBJECT ESP LOGIC ===
+        -- === OBJECT ESP LOGIC ===
     local objectEspDrawings = {dropped = {}, corpse = {}, atv = {}}
     local function updateObjectEsp()
-        -- DroppedItem
         for _, d in pairs(objectEspDrawings.dropped) do d:Remove() end
         table.clear(objectEspDrawings.dropped)
         if objectEspSettings.enabled and objectEspSettings.droppeditem then
@@ -191,7 +185,6 @@ return function(VisualTab)
                 end
             end
         end
-        -- Corpse
         for _, d in pairs(objectEspDrawings.corpse) do d:Remove() end
         table.clear(objectEspDrawings.corpse)
         if objectEspSettings.enabled and objectEspSettings.corpse then
@@ -214,7 +207,6 @@ return function(VisualTab)
                 end
             end
         end
-        -- ATV
         for _, d in pairs(objectEspDrawings.atv) do d:Remove() end
         table.clear(objectEspDrawings.atv)
         if objectEspSettings.enabled and objectEspSettings.atv then
@@ -239,23 +231,9 @@ return function(VisualTab)
         end
     end
 
-        -- === ВСЯ ЛОГИКА ESP/CHAMS/TRACE/LOG/HITSOUND ===
+    -- ===== ESP/CHAMS/TRACE/LOG/HITSOUND =====
 
-    local camera = workspace.CurrentCamera
-    local runservice = game:GetService("RunService")
-    local coregui = game:GetService("CoreGui")
-    local players = game:GetService("Players")
-    local localplayer = players.LocalPlayer
-
-    local ESPHolder = coregui:FindFirstChild("ESP_UI_FIX") or Instance.new("ScreenGui")
-    ESPHolder.Name = "ESP_UI_FIX"
-    ESPHolder.ResetOnSpawn = false
-    ESPHolder.Parent = coregui
-
-    local activeEsp = {}
-    local originalHandProps = {}
-    local originalItemProps = {}
-
+    -- Функции для чамсов
     local function applyItemChams(obj)
         local id = obj:GetDebugId()
         if obj.Name == "Arrow" or obj.Name == "Bullet" then return end
@@ -383,6 +361,7 @@ return function(VisualTab)
         end
     end
 
+    -- Хитсаунд
     local hitSoundList = {
         "PlayerHit",
         "PlayerHit2",
@@ -413,6 +392,7 @@ return function(VisualTab)
         end
     end
 
+    -- ESP
     local function removeEspFor(char, esp)
         if esp then
             if esp.Box then esp.Box.Visible = false esp.Box:Remove() end
@@ -432,26 +412,6 @@ return function(VisualTab)
             end
         end
         return "Player"
-    end
-
-    local function SyncHandModelsAttributes()
-        local handModels = game:GetService("ReplicatedStorage"):FindFirstChild("HandModels")
-        if handModels then
-            for _,v in pairs(handModels:GetChildren()) do
-                if not v:GetAttribute("name") then
-                    v:SetAttribute("name", v.Name)
-                end
-            end
-        end
-    end
-    SyncHandModelsAttributes()
-
-    local function GetWeaponNameSolara(plrChar)
-        local hand = plrChar:FindFirstChild("HandModel")
-        if hand and hand:GetAttribute("name") then
-            return tostring(hand:GetAttribute("name"))
-        end
-        return nil
     end
 
     local function SleepCheck(plrChar)
@@ -605,7 +565,7 @@ return function(VisualTab)
             end
             if espSettings.weapon then
                 esp.Weapon.Visible = true
-                esp.Weapon.Text = GetWeaponNameSolara(char) or "None"
+                esp.Weapon.Text = GetPlayerWeaponType(char) or "None"
                 esp.Weapon.Position = Vector2.new(centerX, weapY)
                 esp.Weapon.Color = espSettings.weaponColor
             else
@@ -638,179 +598,7 @@ return function(VisualTab)
         end
     end
 
-    local bulletTraces = {}
-
-    local function createBulletTrailDynamic(part)
-        local trailPoints = {}
-        local trailLines = {}
-        local lastPos = part.Position
-        local function cleanup()
-            for _, line in ipairs(trailLines) do
-                line.Visible = false
-                line:Remove()
-            end
-            trailLines = {}
-            trailPoints = {}
-        end
-        local conn
-        local function update()
-            if not part.Parent or not part:IsDescendantOf(workspace) then
-                cleanup()
-                if conn then conn:Disconnect() end
-                return
-            end
-            if #trailPoints == 0 or (trailPoints[#trailPoints] - part.Position).Magnitude > 0.01 then
-                table.insert(trailPoints, part.Position)
-                lastPos = part.Position
-            end
-            while #trailLines > #trailPoints-1 do
-                trailLines[#trailLines].Visible = false
-                trailLines[#trailLines]:Remove()
-                table.remove(trailLines)
-            end
-            for i = 1, #trailPoints-1 do
-                local a, b = trailPoints[i], trailPoints[i+1]
-                local screenA, onscreenA = camera:WorldToViewportPoint(a)
-                local screenB, onscreenB = camera:WorldToViewportPoint(b)
-                if not trailLines[i] then
-                    local l = Drawing.new("Line")
-                    l.Thickness = (traceSettings.mode == "Neon") and 2.8 or 2
-                    l.Color = traceSettings.color
-                    trailLines[i] = l
-                end
-                local line = trailLines[i]
-                line.Visible = traceSettings.enabled and onscreenA and onscreenB
-                if line.Visible then
-                    line.From = Vector2.new(screenA.X, screenA.Y)
-                    line.To = Vector2.new(screenB.X, screenB.Y)
-                    line.Color = traceSettings.color
-                    line.Thickness = (traceSettings.mode == "Neon") and 2.8 or 2
-                end
-            end
-        end
-        conn = runservice.RenderStepped:Connect(update)
-        part.Destroying:Connect(function()
-            cleanup()
-            if conn then conn:Disconnect() end
-        end)
-    end
-
-    local function updateBulletTraces()
-        local ignore = workspace:FindFirstChild("Const") and workspace.Const:FindFirstChild("Ignore")
-        if not ignore then return end
-        for _, obj in ipairs(ignore:GetChildren()) do
-            if obj.Name == "Arrow" then
-                local trail = obj:FindFirstChildOfClass("Trail")
-                if trail and not bulletTraces[trail] then
-                    bulletTraces[trail] = true
-                    pcall(function()
-                        trail.Color = ColorSequence.new(traceSettings.color)
-                        trail.Lifetime = traceSettings.enabled and 100 or 0.1
-                        trail.LightEmission = (traceSettings.mode == "Neon") and 1 or 0
-                        if trail.Thickness ~= nil then
-                            trail.Thickness = (traceSettings.enabled and traceSettings.mode == "Neon") and 0.35 or 0.05
-                        end
-                    end)
-                end
-            elseif obj.Name == "Bullet" and not bulletTraces[obj] then
-                bulletTraces[obj] = true
-                createBulletTrailDynamic(obj)
-            end
-        end
-    end
-
-    workspace.DescendantAdded:Connect(function(child)
-        if child.Name == "Arrow" or child.Name == "Bullet" then
-            task.wait(0.03)
-            updateBulletTraces()
-        end
-    end)
-
-    runservice.RenderStepped:Connect(function()
-        UpdateAllEsps()
-        updateHandChams()
-        updateItemChams()
-        updateBulletTraces()
-        updateHitSounds()
-    end)
-
-    workspace.ChildAdded:Connect(function(v)
-        task.delay(1.5, function()
-            if v:FindFirstChild("HumanoidRootPart") and v ~= localplayer.Character then
-                CreateEsp(v)
-            end
-        end)
-    end)
-
-    local function parseLogLine(msg)
-        local attacker, victim, time, weapon, hp_from, hp_to = msg:match("([%w~_]+)%s*%-%>([%w~_]+)%s+(%d+)s%s*([%w%s_%-]+)%s*([%d%.]+)%s*%-%>([%d%.]+)hp")
-        if not attacker then
-            attacker, victim, time, weapon, hp_from, hp_to = msg:match("%-%- ([^%s]+)%s*%-%>([^%s]+)%s*(%d+)s%s*([%w%s_%-]+)%s*([%d%.]+)%s*%-%>([%d%.]+)hp")
-        end
-        if not attacker then
-            attacker, victim, time, weapon, hp_from, hp_to = msg:match("([%w~_]+)%s*%-%>([%w~_]+)%s+(%d+)s%s*([%w%s_%-]+)%s*([%d%.]+)%s*%-%>([%d%.]+)")
-        end
-        return attacker, victim, time, weapon, hp_from, hp_to
-    end
-
-    local LogService = game:GetService("LogService")
-    local logConn = nil
-
-    local Library = getgenv().TridentLibrary
-    assert(Library, "Library не был найден! Запустите main.lua сначала.")
-
-    local function notifyLog(msg)
-        local attacker, victim, time, weapon, hp_from, hp_to = parseLogLine(msg)
-        if attacker and victim and hp_from and hp_to then
-            local hpFrom = tonumber(hp_from)
-            local hpTo = tonumber(hp_to)
-            local logType
-            if hpTo and hpTo <= 0.01 and logSettings.types["Kill log"] then
-                logType = "Kill"
-            elseif hpTo and hpTo > 0.01 and logSettings.types["Hit log"] then
-                logType = "Hit"
-            else
-                return
-            end
-            Library:Notify({
-                Title = logType .. " log",
-                Description = string.format(
-                    "%s: %s -> %s [%ss] %s %.1f -> %.1f",
-                    logType, attacker, victim, time or "?", weapon or "?", hpFrom or 0, hpTo or 0
-                ),
-                Time = 6,
-            })
-        end
-    end
-
-    function setupLogHooks()
-        if logConn then pcall(function() logConn:Disconnect() end) end
-        if logSettings.enabled then
-            logConn = LogService.MessageOut:Connect(function(msg, msgType)
-                notifyLog(msg)
-            end)
-        end
-    end
-
-    Library:OnUnload(function()
-        ESPHolder:Destroy()
-        for char, esp in pairs(activeEsp) do
-            removeEspFor(char, esp)
-        end
-        if logConn then pcall(function() logConn:Disconnect() end) end
-        local soundService = game:GetService("SoundService")
-        for name, oldId in pairs(originalHitSoundIds) do
-            local sound = soundService:FindFirstChild(name)
-            if sound and sound:IsA("Sound") then
-                sound.SoundId = oldId
-            end
-            originalHitSoundIds[name] = nil
-        end
-    end)
-end
-    -- Функции applyItemChams, updateItemChams, updateHandChams, updateHitSounds, removeEspFor, GetPlayerName, SleepCheck, WorldToBox, CreateEsp, UpdateAllEsps и все остальные твои функции ESP/Chams/Trace/Hitlog/HitSound/World (копируй из твоего исходника сюда в том же порядке, без пропусков!)
-
-    -- === BULLET TRACE (пример, из исходника) ===
+    -- Bullet Trace
     local bulletTraces = {}
     local function createBulletTrailDynamic(part)
         local trailPoints = {}
@@ -898,7 +686,6 @@ end
         end
     end)
 
-    -- === Рендерстеп — полный, без пропусков ===
     runservice.RenderStepped:Connect(function()
         updateObjectEsp()
         UpdateAllEsps()
@@ -916,8 +703,7 @@ end
         end)
     end)
 
-    -- (Сразу переходи к третьей части — UNLOAD + конец функции)
-    -- === ЛОГИРОВАНИЕ (пример из исходника) ===
+       -- === ЛОГИРОВАНИЕ (Hit/Kill Log) ===
     local LogService = game:GetService("LogService")
     local logConn = nil
 
