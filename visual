@@ -1,4 +1,4 @@
--- FULL visual.lua for TridentLibrary: ESP (players & object), Chams, Bullet Trace, Hit Logs, FOV changer etc.
+-- FULL visual.lua for TridentLibrary: ESP, Object ESP, Chams, Bullet Trace, Hit Logs, FOV changer, World (clouds, ambient, always day, remove fog, remove leaves, skybox, etc)
 -- Подключать так: local Visual = loadstring(game:HttpGet("https://yourdomain/visual.lua"))() Visual(VisualTab)
 
 return function(VisualTab)
@@ -51,8 +51,27 @@ return function(VisualTab)
         droppedColor = Color3.fromRGB(204,153,255),
         maxDistance = 2000
     }
-    local worldSettings = {
+    local worldVisuals = {
+        noGrass = false,
+        noLeaves = false,
+        clouds = true,
+        cloudsColor = Color3.fromRGB(255,255,255),
+        ambient = Color3.fromRGB(120,120,120),
+        ambientEnabled = false,
+        alwaysDay = false,
+        removeFog = false,
+        skybox = "Default",
         fov = 70
+    }
+    local skyboxes = {
+        ["Default"] = {
+            SkyboxBk = "rbxassetid://401664839",
+            SkyboxDn = "rbxassetid://401664862",
+            SkyboxFt = "rbxassetid://401664936",
+            SkyboxLf = "rbxassetid://401664881",
+            SkyboxRt = "rbxassetid://401664929",
+            SkyboxUp = "rbxassetid://401664883"
+        }
     }
 
     -- === UI ===
@@ -158,6 +177,72 @@ return function(VisualTab)
         Callback = function(val) chamsSettings.itemMat = val end
     })
 
+    WorldBox:AddToggle("NoGrass", {
+        Text = "No Grass",
+        Default = false,
+        Callback = function(val)
+            worldVisuals.noGrass = val
+            local terrain = workspace:FindFirstChildOfClass("Terrain")
+            if sethiddenproperty and terrain then
+                sethiddenproperty(terrain, "Decoration", not val)
+            end
+        end
+    })
+    WorldBox:AddToggle("NoLeaves", {
+        Text = "No Leaves",
+        Default = false,
+        Callback = function(val)
+            worldVisuals.noLeaves = val
+        end
+    })
+    WorldBox:AddToggle("Clouds", {
+        Text = "Clouds",
+        Default = true,
+        Callback = function(val)
+            worldVisuals.clouds = val
+        end
+    }):AddColorPicker("CloudsColor", {
+        Default = worldVisuals.cloudsColor,
+        Title = "Clouds Color",
+        Callback = function(val)
+            worldVisuals.cloudsColor = val
+        end
+    })
+    WorldBox:AddToggle("Ambient", {
+        Text = "Ambient",
+        Default = false,
+        Callback = function(val)
+            worldVisuals.ambientEnabled = val
+        end
+    }):AddColorPicker("AmbientColor", {
+        Default = worldVisuals.ambient,
+        Title = "Ambient Color",
+        Callback = function(val)
+            worldVisuals.ambient = val
+        end
+    })
+    WorldBox:AddToggle("AlwaysDay", {
+        Text = "Always Day",
+        Default = false,
+        Callback = function(val)
+            worldVisuals.alwaysDay = val
+        end
+    })
+    WorldBox:AddToggle("RemoveFog", {
+        Text = "Remove Fog",
+        Default = false,
+        Callback = function(val)
+            worldVisuals.removeFog = val
+        end
+    })
+    WorldBox:AddDropdown("SkyboxSelect", {
+        Text = "Skybox",
+        Values = {"Default"},
+        Default = "Default",
+        Callback = function(val)
+            worldVisuals.skybox = val
+        end
+    })
     WorldBox:AddSlider("worldFovSlider", {
         Text = "FOV Changer",
         Default = 70,
@@ -165,7 +250,7 @@ return function(VisualTab)
         Max = 120,
         Rounding = 0,
         Callback = function(val)
-            worldSettings.fov = val
+            worldVisuals.fov = val
             if workspace.CurrentCamera then
                 workspace.CurrentCamera.FieldOfView = val
             end
@@ -258,14 +343,155 @@ return function(VisualTab)
         Callback = function(val) objectEspSettings.maxDistance = val end
     })
 
-    -- === CORE VARS ===
+    -- === WORLD VISUALS RUNTIME ===
     local camera = workspace.CurrentCamera
     local runservice = game:GetService("RunService")
     local coregui = game:GetService("CoreGui")
     local players = game:GetService("Players")
     local localplayer = players.LocalPlayer
+    local lighting = game:GetService("Lighting")
+    local ESPHolder = coregui:FindFirstChild("ESP_UI_FIX") or Instance.new("ScreenGui")
+    ESPHolder.Name = "ESP_UI_FIX"
+    ESPHolder.ResetOnSpawn = false
+    ESPHolder.Parent = coregui
 
-    -- === PlayerTable Detection ===
+    -- SKYBOX LOGIC
+    local function setSkybox(name)
+        for _,v in pairs(lighting:GetChildren()) do
+            if v:IsA("Sky") then v:Destroy() end
+        end
+        local sb = skyboxes[name]
+        if sb then
+            local sky = Instance.new("Sky")
+            sky.Name = "WorldSkybox"
+            for k, v in pairs(sb) do
+                sky[k] = v
+            end
+            sky.Parent = lighting
+        end
+    end
+
+    -- CLOUDS LOGIC
+    local function setClouds(enabled, color)
+        local terrain = workspace:FindFirstChildOfClass("Terrain")
+        if not terrain then return end
+        local clouds = terrain:FindFirstChildOfClass("Clouds")
+        if enabled then
+            if not clouds then
+                clouds = Instance.new("Clouds")
+                clouds.Parent = terrain
+            end
+            clouds.Enabled = true
+            clouds.Color = color or worldVisuals.cloudsColor
+        else
+            if clouds then clouds.Enabled = false end
+        end
+    end
+
+    -- AMBIENT LOGIC
+    local oldAmbient, oldBrightness, oldOutdoorAmbient = nil, nil, nil
+    local function setAmbient(enabled, color)
+        if enabled then
+            if not oldAmbient then oldAmbient = lighting.Ambient end
+            if not oldBrightness then oldBrightness = lighting.Brightness end
+            if not oldOutdoorAmbient then oldOutdoorAmbient = lighting.OutdoorAmbient end
+            lighting.Ambient = color or worldVisuals.ambient
+            lighting.Brightness = 3
+            lighting.OutdoorAmbient = color or worldVisuals.ambient
+        else
+            if oldAmbient then lighting.Ambient = oldAmbient end
+            if oldBrightness then lighting.Brightness = oldBrightness end
+            if oldOutdoorAmbient then lighting.OutdoorAmbient = oldOutdoorAmbient end
+            oldAmbient, oldBrightness, oldOutdoorAmbient = nil, nil, nil
+        end
+    end
+
+    -- LEAVES LOGIC
+    local leavesRemoved = {}
+    local function removeLeaves()
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj:IsA("BasePart") and obj.Name:match("Leaves$") then
+                obj:Destroy()
+            end
+        end
+    end
+    local function leavesWatcher()
+        if worldVisuals.noLeaves then
+            removeLeaves()
+            if not leavesRemoved.conn then
+                leavesRemoved.conn = workspace.DescendantAdded:Connect(function(obj)
+                    if worldVisuals.noLeaves and obj:IsA("BasePart") and obj.Name:match("Leaves$") then
+                        obj:Destroy()
+                    end
+                end)
+            end
+        else
+            if leavesRemoved.conn then
+                leavesRemoved.conn:Disconnect()
+                leavesRemoved.conn = nil
+            end
+        end
+    end
+
+    -- ALWAYS DAY LOGIC
+    local oldTime, alwaysDayConn = nil, nil
+    local function setAlwaysDay(enabled)
+        if enabled then
+            if not oldTime then oldTime = lighting.ClockTime end
+            lighting.ClockTime = 6
+            if alwaysDayConn then alwaysDayConn:Disconnect() end
+            alwaysDayConn = lighting:GetPropertyChangedSignal("ClockTime"):Connect(function()
+                if worldVisuals.alwaysDay and lighting.ClockTime ~= 6 then
+                    lighting.ClockTime = 6
+                end
+            end)
+            setAmbient(worldVisuals.ambientEnabled, worldVisuals.ambient)
+        else
+            if alwaysDayConn then alwaysDayConn:Disconnect() end
+            alwaysDayConn = nil
+            if oldTime then lighting.ClockTime = oldTime end
+        end
+    end
+
+    -- FOG LOGIC
+    local oldFogProps, fogApplyConn = {}, nil
+    local function setRemoveFog(enabled)
+        if enabled then
+            if not oldFogProps.start then
+                oldFogProps.start = lighting.FogStart
+                oldFogProps.endp = lighting.FogEnd
+                oldFogProps.color = lighting.FogColor
+            end
+            lighting.FogStart = 1000000
+            lighting.FogEnd = 1000000
+            lighting.FogColor = Color3.new(1,1,1)
+        else
+            if fogApplyConn then fogApplyConn:Disconnect() end
+            fogApplyConn = nil
+            if oldFogProps.start then lighting.FogStart = oldFogProps.start end
+            if oldFogProps.endp then lighting.FogEnd = oldFogProps.endp end
+            if oldFogProps.color then lighting.FogColor = oldFogProps.color end
+            oldFogProps = {}
+        end
+    end
+
+    -- === WORLD RUNTIME LOOP ===
+    runservice.RenderStepped:Connect(function()
+        setClouds(worldVisuals.clouds, worldVisuals.cloudsColor)
+        setAmbient(worldVisuals.ambientEnabled, worldVisuals.ambient)
+        setAlwaysDay(worldVisuals.alwaysDay)
+        leavesWatcher()
+        setRemoveFog(worldVisuals.removeFog)
+        setSkybox(worldVisuals.skybox)
+        if camera.FieldOfView ~= worldVisuals.fov then
+            camera.FieldOfView = worldVisuals.fov
+        end
+    end)
+
+    -- === ДАЛЕЕ ВСТАВЬ ВЕСЬ КОД ESP/CHAMS/ObjectESP/Trace/Log/HitSound/Unload ===
+    -- [Весь код из твоего полного visual.lua, который был приведён выше, начинается с поиска PlayerTable, createEsp, UpdateAllEsps, Object ESP, Chams, Bullet Trace, Hit Logs, Hit Sound, Unload ...]
+
+    ----=== PlayerTable detection ===-----
     local PlayerTable
     do
         for _, v in pairs(getgc(true)) do
@@ -296,10 +522,6 @@ return function(VisualTab)
         return "Hands"
     end
 
-    local ESPHolder = coregui:FindFirstChild("ESP_UI_FIX") or Instance.new("ScreenGui")
-    ESPHolder.Name = "ESP_UI_FIX"
-    ESPHolder.ResetOnSpawn = false
-    ESPHolder.Parent = coregui
     local activeEsp = {}
 
     local function removeEspFor(char, esp)
@@ -501,7 +723,7 @@ return function(VisualTab)
         end
     end
 
-    -- === Object ESP ===
+    ---- Object ESP ----
     local objectEspDrawings = { atv = {}, corpse = {}, dropped = {} }
     local function clearObjectEsp(tbl)
         for _, d in pairs(tbl) do
@@ -590,93 +812,7 @@ return function(VisualTab)
         end
     end
 
-    -- === Bullet Trace ===
-    local bulletTraces = {}
-    local function createBulletTrailDynamic(part)
-        local trailPoints = {}
-        local trailLines = {}
-        local lastPos = part.Position
-        local function cleanup()
-            for _, line in ipairs(trailLines) do
-                line.Visible = false
-                line:Remove()
-            end
-            trailLines = {}
-            trailPoints = {}
-        end
-        local conn
-        local function update()
-            if not part.Parent or not part:IsDescendantOf(workspace) then
-                cleanup()
-                if conn then conn:Disconnect() end
-                return
-            end
-            if #trailPoints == 0 or (trailPoints[#trailPoints] - part.Position).Magnitude > 0.01 then
-                table.insert(trailPoints, part.Position)
-                lastPos = part.Position
-            end
-            while #trailLines > #trailPoints-1 do
-                trailLines[#trailLines].Visible = false
-                trailLines[#trailLines]:Remove()
-                table.remove(trailLines)
-            end
-            for i = 1, #trailPoints-1 do
-                local a, b = trailPoints[i], trailPoints[i+1]
-                local screenA, onscreenA = camera:WorldToViewportPoint(a)
-                local screenB, onscreenB = camera:WorldToViewportPoint(b)
-                if not trailLines[i] then
-                    local l = Drawing.new("Line")
-                    l.Thickness = (traceSettings.mode == "Neon") and 2.8 or 2
-                    l.Color = traceSettings.color
-                    trailLines[i] = l
-                end
-                local line = trailLines[i]
-                line.Visible = traceSettings.enabled and onscreenA and onscreenB
-                if line.Visible then
-                    line.From = Vector2.new(screenA.X, screenA.Y)
-                    line.To = Vector2.new(screenB.X, screenB.Y)
-                    line.Color = traceSettings.color
-                    line.Thickness = (traceSettings.mode == "Neon") and 2.8 or 2
-                end
-            end
-        end
-        conn = runservice.RenderStepped:Connect(update)
-        part.Destroying:Connect(function()
-            cleanup()
-            if conn then conn:Disconnect() end
-        end)
-    end
-    local function updateBulletTraces()
-        local ignore = workspace:FindFirstChild("Const") and workspace.Const:FindFirstChild("Ignore")
-        if not ignore then return end
-        for _, obj in ipairs(ignore:GetChildren()) do
-            if obj.Name == "Arrow" then
-                local trail = obj:FindFirstChildOfClass("Trail")
-                if trail and not bulletTraces[trail] then
-                    bulletTraces[trail] = true
-                    pcall(function()
-                        trail.Color = ColorSequence.new(traceSettings.color)
-                        trail.Lifetime = traceSettings.enabled and 100 or 0.1
-                        trail.LightEmission = (traceSettings.mode == "Neon") and 1 or 0
-                        if trail.Thickness ~= nil then
-                            trail.Thickness = (traceSettings.enabled and traceSettings.mode == "Neon") and 0.35 or 0.05
-                        end
-                    end)
-                end
-            elseif obj.Name == "Bullet" and not bulletTraces[obj] then
-                bulletTraces[obj] = true
-                createBulletTrailDynamic(obj)
-            end
-        end
-    end
-    workspace.DescendantAdded:Connect(function(child)
-        if child.Name == "Arrow" or child.Name == "Bullet" then
-            task.wait(0.03)
-            updateBulletTraces()
-        end
-    end)
-
-    -- === CHAMS ===
+    ---- CHAMS ----
     local originalHandProps = {}
     local originalItemProps = {}
     local function applyItemChams(obj)
@@ -802,7 +938,93 @@ return function(VisualTab)
         end
     end
 
-    -- === Hit Logs ===
+    ---- Bullet Trace ----
+    local bulletTraces = {}
+    local function createBulletTrailDynamic(part)
+        local trailPoints = {}
+        local trailLines = {}
+        local lastPos = part.Position
+        local function cleanup()
+            for _, line in ipairs(trailLines) do
+                line.Visible = false
+                line:Remove()
+            end
+            trailLines = {}
+            trailPoints = {}
+        end
+        local conn
+        local function update()
+            if not part.Parent or not part:IsDescendantOf(workspace) then
+                cleanup()
+                if conn then conn:Disconnect() end
+                return
+            end
+            if #trailPoints == 0 or (trailPoints[#trailPoints] - part.Position).Magnitude > 0.01 then
+                table.insert(trailPoints, part.Position)
+                lastPos = part.Position
+            end
+            while #trailLines > #trailPoints-1 do
+                trailLines[#trailLines].Visible = false
+                trailLines[#trailLines]:Remove()
+                table.remove(trailLines)
+            end
+            for i = 1, #trailPoints-1 do
+                local a, b = trailPoints[i], trailPoints[i+1]
+                local screenA, onscreenA = camera:WorldToViewportPoint(a)
+                local screenB, onscreenB = camera:WorldToViewportPoint(b)
+                if not trailLines[i] then
+                    local l = Drawing.new("Line")
+                    l.Thickness = (traceSettings.mode == "Neon") and 2.8 or 2
+                    l.Color = traceSettings.color
+                    trailLines[i] = l
+                end
+                local line = trailLines[i]
+                line.Visible = traceSettings.enabled and onscreenA and onscreenB
+                if line.Visible then
+                    line.From = Vector2.new(screenA.X, screenA.Y)
+                    line.To = Vector2.new(screenB.X, screenB.Y)
+                    line.Color = traceSettings.color
+                    line.Thickness = (traceSettings.mode == "Neon") and 2.8 or 2
+                end
+            end
+        end
+        conn = runservice.RenderStepped:Connect(update)
+        part.Destroying:Connect(function()
+            cleanup()
+            if conn then conn:Disconnect() end
+        end)
+    end
+    local function updateBulletTraces()
+        local ignore = workspace:FindFirstChild("Const") and workspace.Const:FindFirstChild("Ignore")
+        if not ignore then return end
+        for _, obj in ipairs(ignore:GetChildren()) do
+            if obj.Name == "Arrow" then
+                local trail = obj:FindFirstChildOfClass("Trail")
+                if trail and not bulletTraces[trail] then
+                    bulletTraces[trail] = true
+                    pcall(function()
+                        trail.Color = ColorSequence.new(traceSettings.color)
+                        trail.Lifetime = traceSettings.enabled and 100 or 0.1
+                        trail.LightEmission = (traceSettings.mode == "Neon") and 1 or 0
+                        if trail.Thickness ~= nil then
+                            trail.Thickness = (traceSettings.enabled and traceSettings.mode == "Neon") and 0.35 or 0.05
+                        end
+                    end)
+                end
+            elseif obj.Name == "Bullet" and not bulletTraces[obj] then
+                bulletTraces[obj] = true
+                createBulletTrailDynamic(obj)
+            end
+        end
+    end
+    workspace.DescendantAdded:Connect(function(child)
+        if child.Name == "Arrow" or child.Name == "Bullet" then
+            task.wait(0.03)
+            updateBulletTraces()
+        end
+    end)
+
+    ---- Hit Logs / Hit Sound ----
     local hitSoundList = {
         "PlayerHit", "PlayerHit2", "PlayerHit2_Muffled",
         "PlayerHitHeadshot", "PlayerHitHeadshot_Muffled", "PlayerHit_Muffled"
@@ -828,6 +1050,7 @@ return function(VisualTab)
             end
         end
     end
+
     local function parseLogLine(msg)
         local attacker, victim, time, weapon, hp_from, hp_to = msg:match("([%w~_]+)%s*%-%>([%w~_]+)%s+(%d+)s%s*([%w%s_%-]+)%s*([%d%.]+)%s*%-%>([%d%.]+)hp")
         if not attacker then
@@ -874,12 +1097,8 @@ return function(VisualTab)
         end
     end
 
-    -- === MAIN RENDER LOOP ===
+    ---- MAIN RENDER LOOP ----
     runservice.RenderStepped:Connect(function()
-        -- FOV
-        if camera.FieldOfView ~= worldSettings.fov then
-            camera.FieldOfView = worldSettings.fov
-        end
         -- ESP
         UpdateAllEsps()
         -- CHAMS
@@ -903,7 +1122,7 @@ return function(VisualTab)
         end)
     end)
 
-    -- UNLOAD
+    ---- UNLOAD ----
     if Library.OnUnload then
         Library:OnUnload(function()
             ESPHolder:Destroy()
@@ -922,4 +1141,3 @@ return function(VisualTab)
             end
         end)
     end
-end
