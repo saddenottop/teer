@@ -1122,22 +1122,24 @@ return function(VisualTab)
         end)
     end)
 
-    ---- UNLOAD ----
-    if Library.OnUnload then
-        Library:OnUnload(function()
-            ESPHolder:Destroy()
-            for char, esp in pairs(activeEsp) do
-                removeEspFor(char, esp)
+---- UNLOAD ----
+if Library.OnUnload then
+    Library:OnUnload(function()
+        ESPHolder:Destroy()
+        for char, esp in pairs(activeEsp) do
+            removeEspFor(char, esp)
+        end
+        clearObjectEsp(objectEspDrawings)
+        if logConn then pcall(function() logConn:Disconnect() end) end
+        local soundService = game:GetService("SoundService")
+        for name, oldId in pairs(originalHitSoundIds) do
+            local sound = soundService:FindFirstChild(name)
+            if sound and sound:IsA("Sound") then
+                sound.SoundId = oldId
             end
-            clearObjectEsp(objectEspDrawings)
-            if logConn then pcall(function() logConn:Disconnect() end) end
-            local soundService = game:GetService("SoundService")
-            for name, oldId in pairs(originalHitSoundIds) do
-                local sound = soundService:FindFirstChild(name)
-                if sound and sound:IsA("Sound") then
-                    sound.SoundId = oldId
-                end
-                originalHitSoundIds[name] = nil
-            end
-        end)
-    end
+            originalHitSoundIds[name] = nil
+        end
+    end)
+end
+
+end -- <--- это закрывающий end для всей return function(VisualTab)
